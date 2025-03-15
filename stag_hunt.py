@@ -1,185 +1,134 @@
 import dash
 from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 import plotly.graph_objs as go
 import numpy as np
+import scipy.optimize
 
 # Define strategies with emojis
 strategies = ['🤝 Cooperate', '🚫 Defect']
 
-# Map qualitative payoffs to numerical values
-payoff_mapping = {'High': 4, 'Medium': 3, 'Low': 1}
 
-# Define the payoff matrix based on your descriptions
-payoff_matrix = np.array([
-    [(payoff_mapping['High'], payoff_mapping['High']),   # Both Cooperate
-     (payoff_mapping['Low'], payoff_mapping['Medium'])], # China Cooperates, US Defects
-    [(payoff_mapping['Medium'], payoff_mapping['Low']),  # China Defects, US Cooperates
-     (payoff_mapping['Low'], payoff_mapping['Low'])]     # Both Defect
-])
+def utility_function(a, b, c, d):
+    """
+    Compute the payoff matrix based on user-defined integer utility values.
+    Matrix format:
+       [ [(a, a), (b, c)],
+         [(c, b), (d, d)] ]
+    """
+    return np.array([
+        [(a, a),  # AI Stability & Advancement
+         (b, c)],  # Exploited Trust
+        [(c, b),  # Strategic Edge, Lost Trust
+         (d, d)]  # AI Arms Race & Fragmentation
+    ], dtype=int)
+
+
+def find_mixed_strategy_nash(payoff_matrix):
+    """
+    Solve for mixed-strategy Nash equilibrium using linear programming.
+    This is unchanged; it can still work with integer payoffs.
+    """
+    A = np.array(payoff_matrix[:, :, 0], dtype=float)
+    B = np.array(payoff_matrix[:, :, 1], dtype=float)
+
+    def nash_obj(x):
+        # Negative min of (A @ x) for a zero-sum approach
+        return -np.min(A @ x)
+
+    cons = [
+        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+        {'type': 'ineq', 'fun': lambda x: x}
+    ]
+
+    from scipy.optimize import minimize
+    res = minimize(nash_obj, np.array([0.5, 0.5]), constraints=cons)
+
+    return res.x if res.success else None
+
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
-app.title = "Stag Hunt Game: China vs US on AI Policy"
+app.title = "Stag Hunt Game (Integer Payoffs)"
 
-# Define the app layout
 app.layout = html.Div([
-    html.H1("Stag Hunt Game: China vs US on AI Policy",
-            style={'textAlign': 'center', 'fontFamily': 'Arial', 'margin-top': '20px', 'fontSize': '32px'}),
+    html.H1("Stag Hunt Game: US-China AI Policy (Integer Only)",
+            style={'textAlign': 'center', 'fontSize': '32px'}),
 
+    html.P("Adjust the integer parameters (0 to 4) for the payoff matrix and see how the equilibrium changes.",
+           style={'textAlign': 'center', 'fontSize': '16px'}),
+
+    # Sliders for integer payoff parameters
     html.Div([
-        html.P(
-            "This visualization represents the strategic interactions between China and the US regarding AI policy, focusing on cooperation and defection strategies. Hover over each cell to see detailed payoffs and outcome descriptions.",
-            style={'textAlign': 'center', 'fontFamily': 'Arial', 'fontSize': '16px', 'maxWidth': '800px', 'margin': 'auto', 'lineHeight': '1.6'}
-        )
-    ], style={'margin-bottom': '40px'}),
+        html.Label("a (max 4)", style={'fontSize': '16px'}),
+        dcc.Slider(id='input-a', min=0, max=4, step=1, value=4,
+                   marks={i: str(i) for i in range(5)}),
+
+        html.Label("b (max 4)", style={'fontSize': '16px'}),
+        dcc.Slider(id='input-b', min=0, max=4, step=1, value=0,
+                   marks={i: str(i) for i in range(5)}),
+
+        html.Label("c (max 4)", style={'fontSize': '16px'}),
+        dcc.Slider(id='input-c', min=0, max=4, step=1, value=3,
+                   marks={i: str(i) for i in range(5)}),
+
+        html.Label("d (max 4)", style={'fontSize': '16px'}),
+        dcc.Slider(id='input-d', min=0, max=4, step=1, value=3,
+                   marks={i: str(i) for i in range(5)}),
+
+        html.Button("Update Payoff Matrix", id='update-button', n_clicks=0)
+    ], style={'margin': '20px'}),
+
+    html.Label("Mixed Strategy Nash Equilibrium:", style={'fontSize': '18px', 'fontWeight': 'bold'}),
+    html.Div(id='mixed-strategy-output', style={'marginBottom': '20px', 'fontSize': '16px'}),
 
     dcc.Graph(id='payoff-heatmap', config={'displayModeBar': False})
-], style={'backgroundColor': '#f9f9f9', 'padding': '20px'})
+], style={'padding': '20px', 'backgroundColor': '#f9f9f9'})
+
 
 @app.callback(
-    Output('payoff-heatmap', 'figure'),
-    Input('payoff-heatmap', 'id')  # Dummy input to trigger the callback
+    [Output('payoff-heatmap', 'figure'),
+     Output('mixed-strategy-output', 'children')],
+    [Input('update-button', 'n_clicks')],
+    [State('input-a', 'value'),
+     State('input-b', 'value'),
+     State('input-c', 'value'),
+     State('input-d', 'value')]
 )
-def update_heatmap(_):
-    china_payoffs = payoff_matrix[:, :, 0]
-    us_payoffs = payoff_matrix[:, :, 1]
+def update_heatmap(_, a, b, c, d):
+    payoff_matrix = utility_function(a, b, c, d)
 
-    # Descriptions for each outcome
-    descriptions = [
-        ["Alignment on privacy standards, reduced risks of surveillance misuse, shared AI advancements.",
-         "China cooperates, but the US independently advances AI capabilities, prioritizing national gains."],
-        ["The US focuses on collaboration, but China exploits this by advancing its surveillance capabilities.",
-         "Both prioritize national goals, risking privacy violations and a surveillance arms race."]
-    ]
+    # Calculate mixed-strategy equilibrium (if any)
+    mixed_strategy = find_mixed_strategy_nash(payoff_matrix)
+    if mixed_strategy is not None:
+        mixed_str_output = f"China: {mixed_strategy[0]:.2f}, US: {mixed_strategy[1]:.2f}"
+    else:
+        mixed_str_output = "No Mixed Strategy Nash Equilibrium Found"
 
-    hover_text = []
-    annotations = []
-    for i in range(len(strategies)):
-        for j in range(len(strategies)):
-            china_strategy = strategies[i]
-            us_strategy = strategies[j]
-            china_payoff = payoff_matrix[i, j, 0]
-            us_payoff = payoff_matrix[i, j, 1]
-            description = descriptions[i][j]
-            hovertext = f"<span style='font-size:16px;'><b>China Strategy:</b> {china_strategy}<br>" \
-                        f"<b>US Strategy:</b> {us_strategy}<br><br>" \
-                        f"<b>China Payoff:</b> {china_payoff}<br>" \
-                        f"<b>US Payoff:</b> {us_payoff}<br><br>" \
-                        f"{description}</span>"
-            hover_text.append(hovertext)
-
-            # Add annotations to each cell
-            annotations.append(dict(
-                x=j,
-                y=i,
-                text=f"<b>{china_payoff}, {us_payoff}</b>",
-                showarrow=False,
-                font=dict(color='white', size=14),  # Reduced size
-                xanchor='center',
-                yanchor='middle'
-            ))
-
-    # Reshape hover_text to match the shape of the heatmap
-    hover_text = np.array(hover_text).reshape((len(strategies), len(strategies)))
-
-    # Determine best responses
-    china_best_responses = []
-    for i in range(len(strategies)):
-        payoffs = payoff_matrix[i, :, 0]
-        max_payoff = np.max(payoffs)
-        best_actions = np.where(payoffs == max_payoff)[0]
-        china_best_responses.append(best_actions)
-
-    us_best_responses = []
-    for j in range(len(strategies)):
-        payoffs = payoff_matrix[:, j, 1]
-        max_payoff = np.max(payoffs)
-        best_actions = np.where(payoffs == max_payoff)[0]
-        us_best_responses.append(best_actions)
-
-    # Find Nash equilibria
-    nash_equilibria = []
-    for i in range(len(strategies)):
-        for j in china_best_responses[i]:
-            if i in us_best_responses[j]:
-                nash_equilibria.append((i, j))
-
-    # Create shapes to highlight Nash equilibria
-    shapes = []
-    for eq in nash_equilibria:
-        i, j = eq
-        shapes.append(dict(
-            type='rect',
-            x0=j - 0.5,
-            y0=i - 0.5,
-            x1=j + 0.5,
-            y1=i + 0.5,
-            line=dict(color='#FFD700', width=4),
-            fillcolor='rgba(0,0,0,0)'
-        ))
-
-    colorscale = [
-        [0.0, '#002525'],  # Low payoff
-        [0.5, '#0D98BA'],  # Medium payoff
-        [1.0, '#008B8B']   # High payoff
-    ]
-
-    # Normalize z-values for colorscale mapping
-    z = china_payoffs + us_payoffs
-    z_min, z_max = z.min(), z.max()
-    z_norm = (z - z_min) / (z_max - z_min)
+    # Sum of payoffs for color scale
+    z = payoff_matrix[:, :, 0] + payoff_matrix[:, :, 1]
+    z_norm = (z - z.min()) / (z.max() - z.min()) if (z.max() - z.min()) != 0 else z
 
     trace = go.Heatmap(
         z=z_norm,
-        x=[s for s in strategies],
-        y=[s for s in strategies],
-        text=hover_text,
+        x=strategies,
+        y=strategies,
+        text=[[f"China Payoff: {payoff_matrix[i, j, 0]}\nUS Payoff: {payoff_matrix[i, j, 1]}"
+               for j in range(2)] for i in range(2)],
         hoverinfo='text',
-        colorscale=colorscale,
+        colorscale='Blues',
         showscale=False
     )
 
-    layout = go.Layout(
-        title={'text': 'Payoff Matrix: China vs US on AI Policy', 'x': 0.5, 'xanchor': 'center', 'font': {'size': 24}},
-        xaxis=dict(
-            title='US Strategies',
-            tickmode='array',
-            tickvals=[0, 1],
-            ticktext=[s for s in strategies],
-            side='top',
-            ticks='',
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            showticklabels=True,
-            tickfont=dict(size=16)
-        ),
-        yaxis=dict(
-            title='China Strategies',
-            tickmode='array',
-            tickvals=[0, 1],
-            ticktext=[s for s in strategies],
-            ticks='',
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            showticklabels=True,
-            tickfont=dict(size=16),
-            autorange='reversed'
-        ),
-        shapes=shapes,
-        annotations=annotations,
-        margin=dict(l=150, r=150, b=100, t=150),  # Increased margins
-        hovermode='closest',
-        plot_bgcolor='white',
-        paper_bgcolor='#f9f9f9',
+    fig = go.Figure(data=[trace])
+    fig.update_layout(
+        title='Payoff Matrix: US-China AI Policy (Payoffs Matrix)',
+        xaxis=dict(title='US Strategies', tickvals=[0, 1], ticktext=strategies, side='top'),
+        yaxis=dict(title='China Strategies', tickvals=[0, 1], ticktext=strategies, autorange='reversed')
     )
 
-    fig = go.Figure(data=[trace], layout=layout)
+    return fig, mixed_str_output
 
-    return fig
 
 if __name__ == '__main__':
     app.run_server(debug=True)
-
